@@ -60,17 +60,24 @@ class FolderPermissionError(ConversionPipelineError):
 try:
     from PIL import Image
     PIL_Image_Module = Image # Store Image module in a clearly named variable
+    # Expose Pillow's supported formats
+    SUPPORTED_OPEN_FORMATS = sorted(list(PIL_Image_Module.OPEN.keys())) if PIL_Image_Module else []
+    SUPPORTED_SAVE_FORMATS = sorted(list(PIL_Image_Module.SAVE.keys())) if PIL_Image_Module else []
 except ModuleNotFoundError:
     PIL_Image_Module = None # Will be checked by core function
+    SUPPORTED_OPEN_FORMATS = []
+    SUPPORTED_SAVE_FORMATS = []
 
 # --- Core Logic Function ---
-def convert_png_to_webp_in_folder(folder_path, delete_originals=False):
+def convert_images_in_folder(folder_path, source_format, dest_format, delete_originals=False):
     """
-    Converts PNG images in a specified folder to WebP format.
+    Converts images in a specified folder from a source format to a destination format.
 
     Args:
         folder_path (str): The path to the folder containing images.
-        delete_originals (bool, optional): If True, original PNG files will be
+        source_format (str): The source image format (e.g., "png", "jpeg").
+        dest_format (str): The destination image format (e.g., "webp", "gif").
+        delete_originals (bool, optional): If True, original files will be
                                  deleted after successful conversion.
                                  Defaults to False. (This feature is planned
                                  but not yet implemented).
@@ -78,14 +85,14 @@ def convert_png_to_webp_in_folder(folder_path, delete_originals=False):
     Returns:
         dict: A dictionary with keys 'successful', 'failed', and 'skipped',
               each containing a list of tuples.
-              - 'successful': `[(original_filename, webp_filename), ...]`
+              - 'successful': `[(original_filename, new_filename), ...]`
               - 'failed': `[(filename, error_message_string), ...]`
               - 'skipped': `[(filename, reason_string), ...]`
               Example:
               {
-                  'successful': [('image1.png', 'image1.webp')],
-                  'failed': [('image2.png', 'Error: Could not open image.')],
-                  'skipped': [('notes.txt', 'File is not a PNG image'),
+                  'successful': [('image1.jpg', 'image1.png')],
+                  'failed': [('image2.bmp', 'Error: Could not open image.')],
+                  'skipped': [('notes.txt', 'File is not a JPG image'), # Assuming source_format='jpg'
                               ('archive/', 'Item is a directory or not a regular file')]
               }
 
@@ -98,6 +105,34 @@ def convert_png_to_webp_in_folder(folder_path, delete_originals=False):
     if PIL_Image_Module is None:
         raise MissingDependencyError(
             "Pillow library (PIL.Image) not found. It is required for image conversion."
+        )
+
+    # Format validation (basic)
+    if not source_format or not isinstance(source_format, str):
+        raise ValueError("Source format must be a non-empty string.")
+    if not dest_format or not isinstance(dest_format, str):
+        raise ValueError("Destination format must be a non-empty string.")
+
+    # Normalize formats to lowercase for consistent processing
+    source_format_lower = source_format.lower()
+    dest_format_lower = dest_format.lower()
+    
+    # Pillow format identifiers are typically uppercase.
+    # Validation now uses the global SUPPORTED_OPEN_FORMATS and SUPPORTED_SAVE_FORMATS
+    # Convert provided formats to uppercase for comparison as Pillow keys are uppercase.
+    source_format_upper = source_format.upper()
+    dest_format_upper = dest_format.upper()
+
+    if source_format_upper not in SUPPORTED_OPEN_FORMATS:
+        raise ValueError(
+            f"Unsupported source format: '{source_format}'. "
+            f"Supported read formats: {', '.join(SUPPORTED_OPEN_FORMATS)}"
+        )
+
+    if dest_format_upper not in SUPPORTED_SAVE_FORMATS:
+        raise ValueError(
+            f"Unsupported destination format: '{dest_format}'. "
+            f"Supported write formats: {', '.join(SUPPORTED_SAVE_FORMATS)}"
         )
 
     if not os.path.isdir(folder_path):
@@ -123,19 +158,24 @@ def convert_png_to_webp_in_folder(folder_path, delete_originals=False):
             results['skipped'].append((filename, "Item is a directory or not a regular file"))
             continue
 
-        if not filename.lower().endswith(".png"):
-            results['skipped'].append((filename, "File is not a PNG image"))
+        # Use source_format_lower for filename matching, but source_format.upper() for Pillow context
+        if not filename.lower().endswith(f".{source_format_lower}"): 
+            results['skipped'].append((filename, f"File is not a {source_format.upper()} image")) # Display original case or upper
             continue
 
         name_without_ext, _ = os.path.splitext(filename)
-        webp_filename = name_without_ext + ".webp"
-        webp_filepath = os.path.join(folder_path, webp_filename)
+        # Use dest_format_lower for filename extension, but dest_format.upper() for Pillow context
+        new_filename = name_without_ext + f".{dest_format_lower}" 
+        new_filepath = os.path.join(folder_path, new_filename)
 
         try:
+            # Source format support is checked before the loop for efficiency.
             img = PIL_Image_Module.open(file_path)
             try:
-                img.save(webp_filepath, "webp")
-                results['successful'].append((filename, webp_filename))
+                # Destination format support is checked before the loop for efficiency.
+                # Pillow's save() method typically expects the format string in uppercase.
+                img.save(new_filepath, dest_format.upper())
+                results['successful'].append((filename, new_filename))
                 if delete_originals:
                     # TODO: Implement deletion of original file
                     # try:
@@ -145,15 +185,19 @@ def convert_png_to_webp_in_folder(folder_path, delete_originals=False):
                     #     results['failed'].append((filename, f"Successfully converted but failed to delete original. Error: {e_del}"))
                     pass # Placeholder for now
             except PermissionError as e_save:
-                results['failed'].append((filename, f"Error: Permission denied to save '{webp_filename}'. Check write permissions for the folder. Details: {e_save}"))
+                results['failed'].append((filename, f"Error: Permission denied to save '{new_filename}'. Check write permissions for the folder. Details: {e_save}"))
+            except ValueError as e_save: # Pillow can raise ValueError for unsupported formats
+                 results['failed'].append((filename, f"Error: Failed to save '{new_filename}'. Pillow error: {e_save}. Ensure '{dest_format.upper()}' is a supported save format.")) # Display original case or upper
             except Exception as e_save: # Other errors during save (e.g., disk full, Pillow internal)
-                results['failed'].append((filename, f"Error: Failed to save '{webp_filename}'. Reason: {e_save}"))
+                results['failed'].append((filename, f"Error: Failed to save '{new_filename}'. Reason: {e_save}"))
         except PermissionError as e_open:
             results['failed'].append((filename, f"Error: Permission denied to read '{filename}'. Check read permissions. Details: {e_open}"))
         except FileNotFoundError: # Should be rare given os.path.isfile, but for robustness
             results['failed'].append((filename, f"Error: File '{filename}' was not found during processing (it may have been moved/deleted)."))
-        except Exception as e_open: # Catches PIL.UnidentifiedImageError, other PIL/general errors
-            results['failed'].append((filename, f"Error: Could not open or process '{filename}'. It may not be a valid PNG or is corrupted. Details: {e_open}"))
+        except PIL_Image_Module.UnidentifiedImageError:
+            results['failed'].append((filename, f"Error: Cannot identify image file '{filename}'. It may not be a valid {source_format.upper()} or is corrupted.")) # Display original case or upper
+        except Exception as e_open: # Other PIL/general errors
+            results['failed'].append((filename, f"Error: Could not open or process '{filename}'. Details: {e_open}"))
             
     return results
 
@@ -161,7 +205,7 @@ def convert_png_to_webp_in_folder(folder_path, delete_originals=False):
 def main_cli():
     """
     Command-line interface entry point.
-    Parses arguments, calls `convert_png_to_webp_in_folder`, and prints a report.
+    Parses arguments, calls `convert_images_in_folder`, and prints a report.
     Exits with appropriate status codes based on success or failure.
     """
     # Initial check for Pillow when running as CLI.
@@ -175,28 +219,39 @@ def main_cli():
         sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description="Converts PNG images in a specified folder to WebP format.",
-        epilog=f"Example: python {os.path.basename(__file__)} ./my_pictures"
+        description="Converts images in a specified folder from a source format to a destination format.",
+        epilog=f"Example: python {os.path.basename(__file__)} ./my_pictures png webp"
     )
     parser.add_argument(
         "folder_path",
-        help="Path to the folder containing PNG images to be converted."
+        help="Path to the folder containing images to be converted."
+    )
+    parser.add_argument(
+        "source_format",
+        help="Source image format (e.g., png, jpg, tiff)."
+    )
+    parser.add_argument(
+        "dest_format",
+        help="Destination image format (e.g., webp, gif, bmp)."
     )
     # TODO: Fully implement --delete-original flag
     # parser.add_argument(
     #     "--delete-original",
     #     action="store_true",
-    #     help="Delete original PNG files after successful conversion. (NOT YET IMPLEMENTED)"
+    #     help="Delete original files after successful conversion. (NOT YET IMPLEMENTED)"
     # )
 
     args = parser.parse_args()
     folder_path = args.folder_path
+    source_format = args.source_format
+    dest_format = args.dest_format
     # delete_originals_flag = args.delete_original # When implemented
 
     try:
         print(f"Starting image processing in folder: '{folder_path}'...")
-        # results = convert_png_to_webp_in_folder(folder_path, delete_originals_flag) # When implemented
-        results = convert_png_to_webp_in_folder(folder_path) # delete_originals default to False
+        print(f"Converting from {source_format.upper()} to {dest_format.upper()}...")
+        # results = convert_images_in_folder(folder_path, source_format, dest_format, delete_originals_flag) # When implemented
+        results = convert_images_in_folder(folder_path, source_format, dest_format) # delete_originals default to False
 
         print("\n--- Conversion Report ---")
         if results['successful']:
@@ -232,18 +287,23 @@ def main_cli():
     except FolderPermissionError as e:
         print(f"Permission Error: {e}")
         sys.exit(1)
+    except ValueError as e: # Catch argument validation errors from core function
+        print(f"Configuration Error: {e}")
+        sys.exit(1)
     except Exception as e: # Catch-all for other unexpected errors from the core function
         print(f"An unexpected critical error occurred during processing: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    # This script converts PNG images in a specified folder to WebP format.
+    # This script converts images in a specified folder from a source format
+    # to a destination format.
     #
     # How to run from the command line:
-    #   python image_converter.py /path/to/your/images
+    #   python image_converter.py /path/to/your/images <source_format> <dest_format>
     #
     # Example:
-    #   python image_converter.py ./my_pictures
+    #   python image_converter.py ./my_pictures png webp
+    #   python image_converter.py ./my_drawings jpg png
     #
     # Make sure you have Pillow installed (if not, the script will prompt):
     #   pip install Pillow
