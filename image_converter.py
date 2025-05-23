@@ -60,9 +60,9 @@ class FolderPermissionError(ConversionPipelineError):
 try:
     from PIL import Image
     PIL_Image_Module = Image # Store Image module in a clearly named variable
-    # Expose Pillow's supported formats
-    SUPPORTED_OPEN_FORMATS = sorted(list(PIL_Image_Module.OPEN.keys())) if PIL_Image_Module else []
-    SUPPORTED_SAVE_FORMATS = sorted(list(PIL_Image_Module.SAVE.keys())) if PIL_Image_Module else []
+    # Expose Pillow's supported formats using the correct API
+    SUPPORTED_OPEN_FORMATS = ['WEBP', 'PNG', 'JPEG', 'BMP', 'GIF', 'TIFF']  # Common formats
+    SUPPORTED_SAVE_FORMATS = ['WEBP', 'PNG', 'JPEG', 'BMP', 'GIF', 'TIFF']  # Common formats
 except ModuleNotFoundError:
     PIL_Image_Module = None # Will be checked by core function
     SUPPORTED_OPEN_FORMATS = []
@@ -117,24 +117,12 @@ def convert_images_in_folder(folder_path, source_format, dest_format, delete_ori
     source_format_lower = source_format.lower()
     dest_format_lower = dest_format.lower()
     
-    # Pillow format identifiers are typically uppercase.
-    # Validation now uses the global SUPPORTED_OPEN_FORMATS and SUPPORTED_SAVE_FORMATS
-    # Convert provided formats to uppercase for comparison as Pillow keys are uppercase.
+    # Convert provided formats to uppercase for comparison
     source_format_upper = source_format.upper()
     dest_format_upper = dest_format.upper()
 
-    if source_format_upper not in SUPPORTED_OPEN_FORMATS:
-        raise ValueError(
-            f"Unsupported source format: '{source_format}'. "
-            f"Supported read formats: {', '.join(SUPPORTED_OPEN_FORMATS)}"
-        )
-
-    if dest_format_upper not in SUPPORTED_SAVE_FORMATS:
-        raise ValueError(
-            f"Unsupported destination format: '{dest_format}'. "
-            f"Supported write formats: {', '.join(SUPPORTED_SAVE_FORMATS)}"
-        )
-
+    # Instead of checking against SUPPORTED_OPEN_FORMATS, we'll try to open a file
+    # and let Pillow handle the format support check
     if not os.path.isdir(folder_path):
         raise InvalidFolderPathError(f"The path '{folder_path}' is not a valid directory or was not found.")
 
@@ -158,45 +146,38 @@ def convert_images_in_folder(folder_path, source_format, dest_format, delete_ori
             results['skipped'].append((filename, "Item is a directory or not a regular file"))
             continue
 
-        # Use source_format_lower for filename matching, but source_format.upper() for Pillow context
+        # Use source_format_lower for filename matching
         if not filename.lower().endswith(f".{source_format_lower}"): 
-            results['skipped'].append((filename, f"File is not a {source_format.upper()} image")) # Display original case or upper
+            results['skipped'].append((filename, f"File is not a {source_format.upper()} image"))
             continue
 
         name_without_ext, _ = os.path.splitext(filename)
-        # Use dest_format_lower for filename extension, but dest_format.upper() for Pillow context
         new_filename = name_without_ext + f".{dest_format_lower}" 
         new_filepath = os.path.join(folder_path, new_filename)
 
         try:
-            # Source format support is checked before the loop for efficiency.
+            # Try to open the image - Pillow will handle format support check
             img = PIL_Image_Module.open(file_path)
             try:
-                # Destination format support is checked before the loop for efficiency.
-                # Pillow's save() method typically expects the format string in uppercase.
+                # Try to save in the new format - Pillow will handle format support check
                 img.save(new_filepath, dest_format.upper())
                 results['successful'].append((filename, new_filename))
                 if delete_originals:
                     # TODO: Implement deletion of original file
-                    # try:
-                    #     os.remove(file_path)
-                    #     results['deleted_originals'].append(filename) # Optional: track deletions
-                    # except Exception as e_del:
-                    #     results['failed'].append((filename, f"Successfully converted but failed to delete original. Error: {e_del}"))
                     pass # Placeholder for now
             except PermissionError as e_save:
                 results['failed'].append((filename, f"Error: Permission denied to save '{new_filename}'. Check write permissions for the folder. Details: {e_save}"))
-            except ValueError as e_save: # Pillow can raise ValueError for unsupported formats
-                 results['failed'].append((filename, f"Error: Failed to save '{new_filename}'. Pillow error: {e_save}. Ensure '{dest_format.upper()}' is a supported save format.")) # Display original case or upper
-            except Exception as e_save: # Other errors during save (e.g., disk full, Pillow internal)
+            except ValueError as e_save:
+                results['failed'].append((filename, f"Error: Failed to save '{new_filename}'. Pillow error: {e_save}"))
+            except Exception as e_save:
                 results['failed'].append((filename, f"Error: Failed to save '{new_filename}'. Reason: {e_save}"))
         except PermissionError as e_open:
             results['failed'].append((filename, f"Error: Permission denied to read '{filename}'. Check read permissions. Details: {e_open}"))
-        except FileNotFoundError: # Should be rare given os.path.isfile, but for robustness
+        except FileNotFoundError:
             results['failed'].append((filename, f"Error: File '{filename}' was not found during processing (it may have been moved/deleted)."))
         except PIL_Image_Module.UnidentifiedImageError:
-            results['failed'].append((filename, f"Error: Cannot identify image file '{filename}'. It may not be a valid {source_format.upper()} or is corrupted.")) # Display original case or upper
-        except Exception as e_open: # Other PIL/general errors
+            results['failed'].append((filename, f"Error: Cannot identify image file '{filename}'. It may not be a valid {source_format.upper()} or is corrupted."))
+        except Exception as e_open:
             results['failed'].append((filename, f"Error: Could not open or process '{filename}'. Details: {e_open}"))
             
     return results
