@@ -46,7 +46,7 @@ try:
     BACKEND_AVAILABLE = True
     # Use actual supported formats if backend is available
     # Fallback to common formats if the imported lists are empty (e.g. Pillow is missing but backend script somehow imported)
-    UI_SOURCE_FORMATS = SUPPORTED_OPEN_FORMATS if SUPPORTED_OPEN_FORMATS else ['PNG', 'JPEG', 'BMP', 'GIF', 'TIFF'] 
+    UI_SOURCE_FORMATS = SUPPORTED_OPEN_FORMATS if SUPPORTED_OPEN_FORMATS else ['WEBP', 'PNG', 'JPEG', 'BMP', 'GIF', 'TIFF'] 
     UI_DEST_FORMATS = SUPPORTED_SAVE_FORMATS if SUPPORTED_SAVE_FORMATS else ['WEBP', 'PNG', 'JPEG', 'BMP', 'GIF', 'TIFF']
 
 except ImportError:
@@ -57,7 +57,7 @@ except ImportError:
     class InvalidFolderPathError(ConversionPipelineError): pass
     class FolderPermissionError(ConversionPipelineError): pass
     # Fallback format lists for UI when backend is completely unavailable
-    SUPPORTED_OPEN_FORMATS = ['PNG', 'JPEG', 'BMP', 'GIF', 'TIFF'] 
+    SUPPORTED_OPEN_FORMATS = ['WEBP', 'PNG', 'JPEG', 'BMP', 'GIF', 'TIFF'] 
     SUPPORTED_SAVE_FORMATS = ['WEBP', 'PNG', 'JPEG', 'BMP', 'GIF', 'TIFF']
     UI_SOURCE_FORMATS = SUPPORTED_OPEN_FORMATS
     UI_DEST_FORMATS = SUPPORTED_SAVE_FORMATS
