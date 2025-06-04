@@ -113,13 +113,23 @@ def convert_images_in_folder(folder_path, source_format, dest_format, delete_ori
     if not dest_format or not isinstance(dest_format, str):
         raise ValueError("Destination format must be a non-empty string.")
 
+    ALIASES = {"JPG": "JPEG", "TIF": "TIFF"}
+
+    source_format_upper = ALIASES.get(source_format.upper(), source_format.upper())
+    dest_format_upper = ALIASES.get(dest_format.upper(), dest_format.upper())
+
+    if source_format_upper not in SUPPORTED_OPEN_FORMATS:
+        raise ValueError(
+            f"Source format '{source_format}' is not a supported read format by Pillow."
+        )
+    if dest_format_upper not in SUPPORTED_SAVE_FORMATS:
+        raise ValueError(
+            f"Destination format '{dest_format}' is not a supported write format by Pillow."
+        )
+
     # Normalize formats to lowercase for consistent processing
     source_format_lower = source_format.lower()
     dest_format_lower = dest_format.lower()
-    
-    # Convert provided formats to uppercase for comparison
-    source_format_upper = source_format.upper()
-    dest_format_upper = dest_format.upper()
 
     # Instead of checking against SUPPORTED_OPEN_FORMATS, we'll try to open a file
     # and let Pillow handle the format support check
@@ -158,9 +168,13 @@ def convert_images_in_folder(folder_path, source_format, dest_format, delete_ori
         try:
             # Try to open the image - Pillow will handle format support check
             img = PIL_Image_Module.open(file_path)
+            if img.format and img.format.upper() != source_format_upper:
+                raise PIL_Image_Module.UnidentifiedImageError(
+                    f"Unexpected format '{img.format}'"
+                )
             try:
                 # Try to save in the new format - Pillow will handle format support check
-                img.save(new_filepath, dest_format.upper())
+                img.save(new_filepath, dest_format_upper)
                 results['successful'].append((filename, new_filename))
                 if delete_originals:
                     # TODO: Implement deletion of original file
